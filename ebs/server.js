@@ -21,7 +21,7 @@ const fs      = require("fs");
 const path    = require("path");
  
 const app = express();
-app.use(express.json({ limit: "128kb" }));
+app.use(express.json({ limit: "5mb" }));
 app.use(cors());
 
 // ── Config ────────────────────────────────────────────────────────────────────
