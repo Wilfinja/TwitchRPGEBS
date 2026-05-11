@@ -2,21 +2,26 @@
 //  server.js — RPG Overlay EBS (Extension Backend Service)
 //  Deploy to Railway. Set these environment variables:
 //
-//    UNITY_SECRET      — matches PanelSyncServer.cs sharedSecret
-//    EBS_SECRET        — sent back to Unity for inbound commands
-//    TWITCH_CLIENT_ID  — your Twitch Extension client ID
-//    TWITCH_SECRET     — your Twitch Extension secret (for JWT signing)
-//    UNITY_INBOUND_URL — e.g. http://YOUR_PC_IP:7433  (ngrok or Tailscale)
-//    PORT              — set automatically by Railway
+//    UNITY_SECRET       — matches PanelSyncServer.cs sharedSecret
+//    EBS_SECRET         — sent back to Unity for inbound commands
+//    TWITCH_CLIENT_ID   — your Twitch Extension client ID
+//    TWITCH_SECRET      — your Twitch Extension secret (for JWT signing)
+//    TWITCH_CHANNEL_ID  — your numeric Twitch channel ID
+//    UNITY_INBOUND_URL  — e.g. http://100.x.x.x:7433 (Tailscale/ngrok)
+//    PORT               — set automatically by Railway
+//    PERSIST_PATH       — optional override for state file directory
+//                         (Railway persistent volumes mount at /data)
 // ============================================================
-
+ 
 const express = require("express");
-const cors = require("cors");
-const jwt = require("jsonwebtoken");
-const fetch = require("node-fetch");
-
+const cors    = require("cors");
+const jwt     = require("jsonwebtoken");
+const fetch   = require("node-fetch");
+const fs      = require("fs");
+const path    = require("path");
+ 
 const app = express();
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "128kb" }));
 app.use(cors());
 
 // ── Config ────────────────────────────────────────────────────────────────────
