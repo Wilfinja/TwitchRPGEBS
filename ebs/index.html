@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RPG Panel</title>
+<!-- Twitch Extension JS must load BEFORE inline script so window.Twitch.ext exists -->
+<script src="https://extension-files.twitch.tv/helper/v1/twitch-ext.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Pro:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet" />
+<style>
+  /* ── Reset & Base ────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --gold:        #c9a84c;
+    --gold-dim:    #7a6030;
+    --gold-glow:   rgba(201,168,76,0.25);
+    --crimson:     #8b1a1a;
+    --emerald:     #1a6b3c;
+    --sapphire:    #1a3d7c;
+    --amethyst:    #5c1a7c;
+    --bg-deep:     #0a0906;
+    --bg-card:     #110f0b;
+    --bg-panel:    #181410;
+    --border:      rgba(201,168,76,0.18);
+    --border-hover:rgba(201,168,76,0.45);
+    --text:        #e8dfc8;
+    --text-dim:    #8a7d64;
+    --text-bright: #f5ead0;
+    --rarity-common:    #9b9b9b;
+    --rarity-uncommon:  #2ecc71;
+    --rarity-rare:      #3498db;
+    --rarity-epic:      #9b59b6;
+    --rarity-legendary: #f39c12;
+    --rarity-unique:    #00e5ff;
+
+    --tab-h: 34px;
+    --panel-w: 320px;
+  }
+
+  html, body {
+    width: var(--panel-w);
+    height: 500px;
+    overflow: hidden;
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: 'Crimson Pro', Georgia, serif;
+    font-size: 13px;
+  }
+
+  /* ── Scrollbars ──────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 2px; }
+
+  /* ── Layout ──────────────────────────────────────────────── */
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Corner ornaments */
+  #app::before, #app::after {
+    content: '';
+    position: absolute;
+    width: 20px; height: 20px;
+    border-color: var(--gold-dim);
+    border-style: solid;
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0.6;
+  }
+  #app::before { top: 4px; left: 4px; border-width: 1px 0 0 1px; }
+  #app::after  { top: 4px; right: 4px; border-width: 1px 1px 0 0; }
+
+  /* ── Header ──────────────────────────────────────────────── */
+  #header {
+    padding: 10px 14px 6px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: linear-gradient(180deg, rgba(201,168,76,0.06) 0%, transparent 100%);
+  }
+
+  #header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  #char-name {
+    font-family: 'Cinzel', serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--gold);
+    letter-spacing: 0.04em;
+    text-shadow: 0 0 12px var(--gold-glow);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #char-class-badge {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    color: var(--bg-deep);
+    background: var(--gold);
+    padding: 2px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    text-transform: uppercase;
+  }
+
+  #char-level {
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  /* XP Bar */
+  #xp-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  #xp-label { font-size: 10px; color: var(--text-dim); width: 36px; flex-shrink: 0; }
+
+  #xp-bar-wrap {
+    flex: 1;
+    height: 4px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  #xp-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+    border-radius: 2px;
+    transition: width 0.6s ease;
+    width: 0%;
+  }
+
+  #xp-val { font-size: 10px; color: var(--text-dim); width: 60px; text-align: right; flex-shrink: 0; }
+
+  /* HP Bar */
+  #hp-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  #hp-label { font-size: 10px; color: #a33; width: 36px; flex-shrink: 0; }
+
+  #hp-bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  #hp-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6b1212, #c0392b);
+    border-radius: 3px;
+    transition: width 0.4s ease;
+    width: 100%;
+  }
+
+  #hp-val { font-size: 10px; color: #c0392b; width: 60px; text-align: right; flex-shrink: 0; }
+
+  /* Coins */
+  #coins-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 5px;
+  }
+
+  #coins-display {
+    font-size: 12px;
+    color: var(--gold);
+  }
+
+  #coins-display span { font-size: 10px; color: var(--gold-dim); margin-right: 2px; }
+
+  #global-status {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
+  #global-status.combat    { color: #e74c3c; font-style: normal; }
+  #global-status.expedition{ color: #f39c12; font-style: normal; }
+  #global-status.pvp       { color: #9b59b6; font-style: normal; }
+
+  /* ── Tabs ────────────────────────────────────────────────── */
+  #tabs {
+    display: flex;
+    height: var(--tab-h);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg-card);
+  }
+
+  .tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Cinzel', serif;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+    user-select: none;
+  }
+
+  .tab:hover { color: var(--gold); }
+
+  .tab.active {
+    color: var(--gold);
+    border-bottom-color: var(--gold);
+    background: rgba(201,168,76,0.05);
+  }
+
+  /* ── Tab Content ─────────────────────────────────────────── */
+  #tab-content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .tab-pane {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    padding: 10px 12px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+  }
+
+  .tab-pane.active {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  /* ── Section titles ──────────────────────────────────────── */
+  .section-title {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: var(--gold-dim);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── STATS TAB ───────────────────────────────────────────── */
+  #stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    margin-bottom: 10px;
+  }
+
+  .stat-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    transition: border-color 0.2s;
+  }
+
+  .stat-box:hover { border-color: var(--border-hover); }
+
+  .stat-box-label {
+    font-family: 'Cinzel', serif;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+  }
+
+  .stat-box-value {
+    font-size: 20px;
+    font-weight: 300;
+    color: var(--text-bright);
+    line-height: 1;
+  }
+
+  .stat-box-bonus {
+    font-size: 10px;
+    color: var(--emerald);
+  }
+
+  .stat-box-bonus.negative { color: var(--crimson); }
+
+  /* Combat stats row */
+  #combat-stats {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .combat-stat {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 8px;
+    text-align: center;
+  }
+
+  .combat-stat-label {
+    font-size: 9px;
+    color: var(--text-dim);
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .combat-stat-value {
+    font-family: 'Cinzel', serif;
+    font-size: 14px;
+    color: var(--gold);
+  }
+
+  /* PvP record */
+  #pvp-record {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .pvp-box {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px;
+    text-align: center;
+  }
+
+  .pvp-box-label { font-size: 9px; color: var(--text-dim); }
+  .pvp-box-value { font-family: 'Cinzel', serif; font-size: 16px; }
+  .pvp-box-value.wins   { color: var(--gold); }
+  .pvp-box-value.losses { color: #c0392b; }
+  .pvp-box-value.rate   { color: var(--text); font-size: 14px; }
+
+  /* Unallocated points banner */
+  #unallocated-banner {
+    background: rgba(201,168,76,0.1);
+    border: 1px solid var(--gold-dim);
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--gold);
+  }
+
+  #unallocated-banner.show { display: flex; }
+  #unallocated-banner span { flex: 1; }
+
+  /* ── ABILITIES TAB ───────────────────────────────────────── */
+  #abilities-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .ability-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.1s;
+  }
+
+  .ability-card:hover { border-color: var(--border-hover); }
+
+  .ability-card-top {
+    display: flex;
+    align-items: center;
+    padding: 7px 10px;
+    gap: 8px;
+  }
+
+  .ability-icon {
+    width: 28px; height: 28px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+    background: rgba(201,168,76,0.1);
+    border: 1px solid var(--border);
+  }
+
+  .ability-name {
+    flex: 1;
+    font-family: 'Cinzel', serif;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-bright);
+  }
+
+  .ability-cmd {
+    font-size: 9px;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
+  .ability-queue-btn {
+    background: linear-gradient(135deg, #2a2015, #1a150a);
+    border: 1px solid var(--gold-dim);
+    color: var(--gold);
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+    white-space: nowrap;
+  }
+
+  .ability-queue-btn:hover {
+    background: linear-gradient(135deg, #3d3020, #2a2010);
+    border-color: var(--gold);
+    color: var(--text-bright);
+  }
+
+  .ability-queue-btn:active { transform: scale(0.96); }
+
+  .ability-queue-btn.queued {
+    background: rgba(46,204,113,0.12);
+    border-color: #27ae60;
+    color: #2ecc71;
+  }
+
+  .ability-queue-btn.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  /* Confirm button */
+  #confirm-btn-wrap {
+    margin-top: 6px;
+  }
+
+  #confirm-btn {
+    width: 100%;
+    background: linear-gradient(135deg, #0d3320, #1a6b3c);
+    border: 1px solid #27ae60;
+    color: #2ecc71;
+    font-family: 'Cinzel', serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: none;
+  }
+
+  #confirm-btn.show { display: block; }
+  #confirm-btn:hover { background: linear-gradient(135deg, #1a4a30, #25916e); }
+
+  /* Turn timer */
+  #turn-timer-bar {
+    width: 100%;
+    height: 3px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 8px;
+    display: none;
+  }
+
+  #turn-timer-bar.show { display: block; }
+
+  #turn-timer-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #e74c3c, #f39c12);
+    border-radius: 2px;
+    transition: width 1s linear;
+  }
+
+  #turn-status {
+    font-family: 'Cinzel', serif;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-align: center;
+    margin-bottom: 8px;
+    display: none;
+  }
+
+  #turn-status.show { display: block; }
+  #turn-status.player-turn  { color: #2ecc71; }
+  #turn-status.enemy-turn   { color: #e74c3c; }
+
+  /* ── INVENTORY TAB ───────────────────────────────────────── */
+  #equipped-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5px;
+    margin-bottom: 10px;
+  }
+
+  .equip-slot {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 6px;
+    min-height: 38px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .equip-slot-label {
+    font-size: 8px;
+    color: var(--text-dim);
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.1em;
+  }
+
+  .equip-slot-name {
+    font-size: 10px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .equip-slot-name.empty { color: var(--text-dim); font-style: italic; font-size: 9px; }
+
+  #inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+  }
+
+  .inv-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    position: relative;
+    min-height: 42px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .inv-item:hover { border-color: var(--border-hover); }
+
+  .inv-item-name {
+    font-size: 9px;
+    color: var(--text);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.2;
+  }
+
+  .inv-item-rarity {
+    font-size: 8px;
+    font-family: 'Cinzel', serif;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+
+  .rarity-common    { color: var(--rarity-common); }
+  .rarity-uncommon  { color: var(--rarity-uncommon); }
+  .rarity-rare      { color: var(--rarity-rare); }
+  .rarity-epic      { color: var(--rarity-epic); }
+  .rarity-legendary { color: var(--rarity-legendary); }
+  .rarity-unique    { color: var(--rarity-unique); }
+
+  .inv-count {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-align: right;
+    margin-bottom: 4px;
+  }
+
+  /* ── Toast / Feedback ────────────────────────────────────── */
+  #toast {
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%) translateY(30px);
+    background: rgba(15,12,8,0.95);
+    border: 1px solid var(--border-hover);
+    border-radius: 5px;
+    padding: 7px 14px;
+    font-size: 11px;
+    color: var(--text-bright);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.25s;
+    z-index: 100;
+    pointer-events: none;
+    max-width: 280px;
+    white-space: normal;
+    text-align: center;
+  }
+
+  #toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  #toast.success { border-color: #27ae60; color: #2ecc71; }
+  #toast.error   { border-color: #c0392b; color: #e74c3c; }
+
+  /* ── Loading / Offline states ────────────────────────────── */
+  #loading-screen {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-deep);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    z-index: 50;
+  }
+
+  #loading-screen.hidden { display: none; }
+
+  .loading-crest {
+    font-family: 'Cinzel', serif;
+    font-size: 28px;
+    color: var(--gold-dim);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .loading-text {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    font-family: 'Cinzel', serif;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  #no-class-screen {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-deep);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 20px;
+    text-align: center;
+    z-index: 49;
+  }
+
+  #no-class-screen.show { display: flex; }
+
+  .no-class-icon { font-size: 32px; margin-bottom: 4px; }
+
+  .no-class-title {
+    font-family: 'Cinzel', serif;
+    font-size: 14px;
+    color: var(--gold);
+    font-weight: 700;
+  }
+
+  .no-class-text { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+
+  .no-class-cmd {
+    font-family: monospace;
+    font-size: 12px;
+    background: rgba(201,168,76,0.1);
+    border: 1px solid var(--gold-dim);
+    border-radius: 3px;
+    padding: 4px 10px;
+    color: var(--gold);
+    margin-top: 4px;
+  }
+
+  /* ── Ornament divider ────────────────────────────────────── */
+  .ornament {
+    text-align: center;
+    color: var(--gold-dim);
+    font-size: 11px;
+    letter-spacing: 0.4em;
+    margin: 4px 0;
+    opacity: 0.6;
+  }
+</style>
+</head>
+
+<body>
+<div id="app">
+
+  <!-- Loading screen -->
+  <div id="loading-screen">
+    <div class="loading-crest">⚔</div>
+    <div class="loading-text">CONNECTING TO THE REALM...</div>
+  </div>
+
+  <!-- No class screen -->
+  <div id="no-class-screen">
+    <div class="no-class-icon">🏰</div>
+    <div class="no-class-title">Choose Your Path</div>
+    <div class="no-class-text">Type in Twitch chat to begin your adventure.</div>
+    <div class="no-class-cmd">!class rogue</div>
+    <div class="no-class-cmd">!class fighter</div>
+    <div class="no-class-cmd">!class mage</div>
+    <div class="no-class-cmd">!class cleric</div>
+    <div class="no-class-cmd">!class ranger</div>
+  </div>
+
+  <!-- Header -->
+  <div id="header">
+    <div id="header-top">
+      <div id="char-name">Loading...</div>
+      <div id="char-class-badge" style="display:none">ROGUE</div>
+      <div id="char-level">Lv. 1</div>
+    </div>
+    <div id="xp-row">
+      <div id="xp-label">EXP</div>
+      <div id="xp-bar-wrap"><div id="xp-bar-fill"></div></div>
+      <div id="xp-val">0 / 150</div>
+    </div>
+    <div id="hp-row">
+      <div id="hp-label">HP</div>
+      <div id="hp-bar-wrap"><div id="hp-bar-fill"></div></div>
+      <div id="hp-val">100 / 100</div>
+    </div>
+    <div id="coins-row">
+      <div id="coins-display"><span>💰</span><span id="coins-amount">0</span> coins</div>
+      <div id="global-status">Idle</div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div id="tabs">
+    <div class="tab active" data-tab="stats">STATS</div>
+    <div class="tab" data-tab="abilities">ABILITIES</div>
+    <div class="tab" data-tab="inventory">INVENTORY</div>
+  </div>
+
+  <!-- Tab content -->
+  <div id="tab-content">
+
+    <!-- STATS -->
+    <div class="tab-pane active" id="pane-stats">
+      <div id="unallocated-banner">
+        <span id="unallocated-text">★ 2 stat points to allocate!</span>
+        <small style="color:var(--text-dim)">!levelup str 1</small>
+      </div>
+
+      <div class="section-title">Attributes</div>
+      <div id="stats-grid">
+        <div class="stat-box"><div class="stat-box-label">STRENGTH</div><div class="stat-box-value" id="stat-str">1</div><div class="stat-box-bonus" id="stat-str-bonus"></div></div>
+        <div class="stat-box"><div class="stat-box-label">CONSTITUTION</div><div class="stat-box-value" id="stat-con">1</div><div class="stat-box-bonus" id="stat-con-bonus"></div></div>
+        <div class="stat-box"><div class="stat-box-label">DEXTERITY</div><div class="stat-box-value" id="stat-dex">1</div><div class="stat-box-bonus" id="stat-dex-bonus"></div></div>
+        <div class="stat-box"><div class="stat-box-label">WILLPOWER</div><div class="stat-box-value" id="stat-wil">1</div><div class="stat-box-bonus" id="stat-wil-bonus"></div></div>
+        <div class="stat-box"><div class="stat-box-label">CHARISMA</div><div class="stat-box-value" id="stat-cha">1</div><div class="stat-box-bonus" id="stat-cha-bonus"></div></div>
+        <div class="stat-box"><div class="stat-box-label">INTELLIGENCE</div><div class="stat-box-value" id="stat-int">1</div><div class="stat-box-bonus" id="stat-int-bonus"></div></div>
+      </div>
+
+      <div class="section-title">Combat</div>
+      <div id="combat-stats">
+        <div class="combat-stat"><span class="combat-stat-label">DAMAGE +</span><span class="combat-stat-value" id="cs-damage">0</span></div>
+        <div class="combat-stat"><span class="combat-stat-label">DEFENSE +</span><span class="combat-stat-value" id="cs-defense">0</span></div>
+      </div>
+
+      <div class="section-title">PvP Record</div>
+      <div id="pvp-record">
+        <div class="pvp-box"><div class="pvp-box-label">WINS</div><div class="pvp-box-value wins" id="pvp-wins">0</div></div>
+        <div class="pvp-box"><div class="pvp-box-label">LOSSES</div><div class="pvp-box-value losses" id="pvp-losses">0</div></div>
+        <div class="pvp-box"><div class="pvp-box-label">WIN RATE</div><div class="pvp-box-value rate" id="pvp-rate">—</div></div>
+      </div>
+    </div>
+
+    <!-- ABILITIES -->
+    <div class="tab-pane" id="pane-abilities">
+      <div id="turn-status">⚔ PLAYER TURN</div>
+      <div id="turn-timer-bar"><div id="turn-timer-fill" style="width:100%"></div></div>
+
+      <div id="confirm-btn-wrap">
+        <button id="confirm-btn" onclick="sendCommand('confirm', [])">✓ CONFIRM ACTION</button>
+      </div>
+
+      <div class="ornament">· · ·</div>
+
+      <div class="section-title">Loadout</div>
+      <div id="abilities-list">
+        <div style="color:var(--text-dim);font-size:11px;text-align:center;padding:12px 0;">No abilities equipped.<br><small style="font-size:10px">Type !equipability &lt;name&gt; in chat.</small></div>
+      </div>
+    </div>
+
+    <!-- INVENTORY -->
+    <div class="tab-pane" id="pane-inventory">
+      <div class="section-title">Equipped</div>
+      <div id="equipped-grid">
+        <div class="equip-slot"><div class="equip-slot-label">HEAD</div><div class="equip-slot-name empty" id="eq-head">—</div></div>
+        <div class="equip-slot"><div class="equip-slot-label">CHEST</div><div class="equip-slot-name empty" id="eq-chest">—</div></div>
+        <div class="equip-slot"><div class="equip-slot-label">MAIN</div><div class="equip-slot-name empty" id="eq-main">—</div></div>
+        <div class="equip-slot"><div class="equip-slot-label">ARMS</div><div class="equip-slot-name empty" id="eq-arms">—</div></div>
+        <div class="equip-slot"><div class="equip-slot-label">LEGS</div><div class="equip-slot-name empty" id="eq-legs">—</div></div>
+        <div class="equip-slot"><div class="equip-slot-label">OFF</div><div class="equip-slot-name empty" id="eq-off">—</div></div>
+      </div>
+
+      <div class="section-title" style="margin-top:4px">
+        Bag
+        <span id="inv-count-label" style="font-size:9px;color:var(--text-dim);margin-left:4px;font-family:'Crimson Pro',serif;font-weight:300;letter-spacing:0"></span>
+      </div>
+      <div id="inventory-grid"></div>
+    </div>
+
+  </div><!-- /tab-content -->
+</div><!-- /app -->
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script src="panel.js"></script>
+
+
+
+</html>
