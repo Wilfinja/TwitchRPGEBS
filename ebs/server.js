@@ -36,8 +36,8 @@ app.use(cors());
 
 const UNITY_SECRET      = process.env.UNITY_SECRET      || "fAquxh3jWudjqPtc7DlilLEEA0Wy9zwR";
 const EBS_SECRET        = process.env.EBS_SECRET        || "W2rSwaK6hY7a9lMTEgtnlcyNzcKKSoOB";
-const TWITCH_CLIENT_ID  = process.env.TWITCH_CLIENT_ID  || "";
-const TWITCH_SECRET     = process.env.TWITCH_SECRET     || "";
+const TWITCH_CLIENT_ID  = process.env.TWITCH_CLIENT_ID  || "r4vkf1f3llbeprf2psd8dpz1oyiov8";
+const TWITCH_SECRET     = process.env.TWITCH_SECRET     || "r9gSD4SBY4p9v1+QTFI6fFqIqsJsiWCxOcwjUkDLfvE=";
 const UNITY_INBOUND_URL = process.env.UNITY_INBOUND_URL || "http://localhost:7433";
 const PORT              = process.env.PORT              || 3000;
 
