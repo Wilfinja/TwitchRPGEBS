@@ -12,35 +12,23 @@
 //    PERSIST_PATH       — optional override for state file directory
 //                         (Railway persistent volumes mount at /data)
 // ============================================================
-
+ 
 const express = require("express");
 const cors    = require("cors");
 const jwt     = require("jsonwebtoken");
 const fetch   = require("node-fetch");
 const fs      = require("fs");
 const path    = require("path");
-
+ 
 const app = express();
-
+ 
 // ── Static file serving ───────────────────────────────────────────────────────
 // Serves index.html and panel.js from the /public folder.
 // These are your Twitch panel extension files.
 // Twitch fetches them by their MIME type — Express sets this correctly
 // from the file extension (.js → application/javascript, .html → text/html).
 app.use(express.static(path.join(__dirname, "public")));
-
-app.use(express.json({ limit: "128kb" }));
-app.use(cors());
-
-// ── Config ────────────────────────────────────────────────────────────────────
-
-const UNITY_SECRET      = process.env.UNITY_SECRET      || "fAquxh3jWudjqPtc7DlilLEEA0Wy9zwR";
-const EBS_SECRET        = process.env.EBS_SECRET        || "W2rSwaK6hY7a9lMTEgtnlcyNzcKKSoOB";
-const TWITCH_CLIENT_ID  = process.env.TWITCH_CLIENT_ID  || "r4vkf1f3llbeprf2psd8dpz1oyiov8";
-const TWITCH_SECRET     = process.env.TWITCH_SECRET     || "r9gSD4SBY4p9v1+QTFI6fFqIqsJsiWCxOcwjUkDLfvE=";
-const UNITY_INBOUND_URL = process.env.UNITY_INBOUND_URL || "http://100.99.141.110:7433";
-const PORT              = process.env.PORT              || 3000;
-
+ 
 const PERSIST_DIR  = process.env.PERSIST_PATH || (fs.existsSync("/data") ? "/data" : "/tmp");
 const PERSIST_FILE = path.join(PERSIST_DIR, "rpg_viewer_states.json");
  
@@ -346,8 +334,9 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
     const unityRes = await fetch(`${UNITY_INBOUND_URL}/`, {
       method:  "POST",
       headers: {
-        "Content-Type": "application/json",
-        "X-EBS-Secret": EBS_SECRET,
+        "Content-Type":               "application/json",
+        "X-EBS-Secret":               EBS_SECRET,
+        "ngrok-skip-browser-warning": "1",
       },
       body:    JSON.stringify({ userId, username, command: cmd, args: args || [] }),
       timeout: 10_000,
@@ -432,8 +421,9 @@ async function forwardToUnity(userId, username, command, args) {
   const res = await fetch(`${UNITY_INBOUND_URL}/`, {
     method:  "POST",
     headers: {
-      "Content-Type": "application/json",
-      "X-EBS-Secret": EBS_SECRET,
+      "Content-Type":              "application/json",
+      "X-EBS-Secret":              EBS_SECRET,
+      "ngrok-skip-browser-warning": "1",  // needed if using ngrok free tier
     },
     body:    JSON.stringify({ userId, username, command, args: args || [] }),
     timeout: 8_000,
@@ -489,7 +479,7 @@ async function broadcastToViewer(userId, state) {
  
 async function broadcastGlobal(state) {
   if (!TWITCH_CLIENT_ID || !TWITCH_SECRET) return;
-  const channelId = process.env.TWITCH_CHANNEL_ID || "";
+  const channelId = process.env.TWITCH_CHANNEL_ID || "416109881";
   if (!channelId) return;
  
   const token   = makePubSubJwt(channelId, "broadcast", []);
