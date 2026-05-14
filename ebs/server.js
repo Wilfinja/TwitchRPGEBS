@@ -38,7 +38,7 @@ const UNITY_SECRET      = process.env.UNITY_SECRET      || "fAquxh3jWudjqPtc7Dli
 const EBS_SECRET        = process.env.EBS_SECRET        || "W2rSwaK6hY7a9lMTEgtnlcyNzcKKSoOB";
 const TWITCH_CLIENT_ID  = process.env.TWITCH_CLIENT_ID  || "r4vkf1f3llbeprf2psd8dpz1oyiov8";
 const TWITCH_SECRET     = process.env.TWITCH_SECRET     || "r9gSD4SBY4p9v1+QTFI6fFqIqsJsiWCxOcwjUkDLfvE=";
-const UNITY_INBOUND_URL = process.env.UNITY_INBOUND_URL || "http://localhost:7433";
+const UNITY_INBOUND_URL = process.env.UNITY_INBOUND_URL || "http://100.99.141.110:7433";
 const PORT              = process.env.PORT              || 3000;
 
 const PERSIST_DIR  = process.env.PERSIST_PATH || (fs.existsSync("/data") ? "/data" : "/tmp");
@@ -386,7 +386,41 @@ app.get("/health", (req, res) => {
     viewersCached:   viewerStates.size,
     lastUnityPingAt: lastUnityPingAt ? new Date(lastUnityPingAt).toISOString() : null,
     persistFile:     PERSIST_FILE,
+    unityInboundUrl: UNITY_INBOUND_URL,
   });
+});
+ 
+// ── Debug: test Tailscale tunnel to Unity ─────────────────────────────────────
+// Hit this in your browser to confirm Railway can reach your PC:
+//   https://your-railway-url.up.railway.app/debug/ping-unity
+// You should see {"reachable":true} if Tailscale + port 7433 are working.
+// Remove or protect this endpoint once confirmed working.
+app.get("/debug/ping-unity", async (req, res) => {
+  try {
+    const response = await fetch(`${UNITY_INBOUND_URL}/`, {
+      method:  "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-EBS-Secret": EBS_SECRET,
+      },
+      body:    JSON.stringify({ userId: "debug", username: "debug", command: "ping", args: [] }),
+      timeout: 5_000,
+    });
+    const text = await response.text();
+    res.json({
+      reachable:   true,
+      status:      response.status,
+      body:        text.substring(0, 200),
+      unityUrl:    UNITY_INBOUND_URL,
+    });
+  } catch (err) {
+    res.json({
+      reachable:  false,
+      error:      err.message,
+      unityUrl:   UNITY_INBOUND_URL,
+      hint:       "Check: (1) Tailscale is running, (2) UNITY_INBOUND_URL is your Tailscale IP not localhost, (3) port 7433 is allowed in Windows Firewall",
+    });
+  }
 });
  
 // ── Unity forward helper ──────────────────────────────────────────────────────
@@ -431,7 +465,7 @@ function makePubSubJwt(channelId, targetType, targets) {
  
 async function broadcastToViewer(userId, state) {
   if (!TWITCH_CLIENT_ID || !TWITCH_SECRET) return;
-  const channelId = process.env.TWITCH_CHANNEL_ID || "";
+  const channelId = process.env.TWITCH_CHANNEL_ID || "416109881";
   if (!channelId) return;
  
   const token   = makePubSubJwt(channelId, "whisper", [userId]);
@@ -455,7 +489,7 @@ async function broadcastToViewer(userId, state) {
  
 async function broadcastGlobal(state) {
   if (!TWITCH_CLIENT_ID || !TWITCH_SECRET) return;
-  const channelId = process.env.TWITCH_CHANNEL_ID || "416109881";
+  const channelId = process.env.TWITCH_CHANNEL_ID || "";
   if (!channelId) return;
  
   const token   = makePubSubJwt(channelId, "broadcast", []);
