@@ -455,7 +455,7 @@ async function broadcastToViewer(userId, state) {
  
 async function broadcastGlobal(state) {
   if (!TWITCH_CLIENT_ID || !TWITCH_SECRET) return;
-  const channelId = process.env.TWITCH_CHANNEL_ID || "";
+  const channelId = process.env.TWITCH_CHANNEL_ID || "416109881";
   if (!channelId) return;
  
   const token   = makePubSubJwt(channelId, "broadcast", []);
