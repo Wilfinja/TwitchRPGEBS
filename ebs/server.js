@@ -58,6 +58,30 @@ const viewerStates  = new Map();
 let   globalState   = {};
 let   lastUnityPingAt = null;
  
+// ── Command lockout ───────────────────────────────────────────────────────────
+// When a viewer sends equipability / unequipability from the panel, the EBS
+// updates its cache optimistically and fires the change to Unity. But Unity's
+// batch push timer (every 5s) can fire BEFORE Unity has processed the command,
+// sending the OLD loadout back and overwriting the EBS cache — causing the
+// panel to revert. We block that viewer's slot in the batch push for 8 seconds,
+// which is long enough for the command to reach Unity and for the next batch
+// push to carry the correct state.
+const commandLockouts = new Map(); // userId → Date.now() when locked
+ 
+function setCommandLockout(userId) {
+  commandLockouts.set(userId, Date.now());
+}
+ 
+function isLockedOut(userId) {
+  const t = commandLockouts.get(userId);
+  if (!t) return false;
+  if (Date.now() - t >= 8_000) {
+    commandLockouts.delete(userId);
+    return false;
+  }
+  return true;
+}
+ 
 // ── Persistence ───────────────────────────────────────────────────────────────
  
 function loadPersistedStates() {
@@ -180,6 +204,10 @@ app.post("/unity/push-batch", requireUnitySecret, (req, res) => {
  
   for (const { userId, state } of viewers) {
     if (!userId || !state) continue;
+    // If this viewer recently sent an equip/unequip command, the EBS cache
+    // already has the correct optimistic state. Skip Unity's push for this
+    // viewer until the lockout expires (8s), preventing the rollback.
+    if (isLockedOut(userId)) continue;
     const entry = { state, updatedAt: now, lastSeenOnline: now };
     viewerStates.set(userId, entry);
     count++;
@@ -332,6 +360,7 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
     entry.updatedAt = new Date().toISOString();
     viewerStates.set(userId, entry);
     schedulePersist();
+    setCommandLockout(userId); // prevent next batch push from rolling this back
  
     // Forward to Unity so RPGManager saves the change — fire and forget
     forwardToUnity(userId, username, "equipability", [abilityCmd])
@@ -377,6 +406,7 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
     entry.updatedAt = new Date().toISOString();
     viewerStates.set(userId, entry);
     schedulePersist();
+    setCommandLockout(userId); // prevent next batch push from rolling this back
  
     // Forward to Unity by cmd name — Unity will find the slot itself
     forwardToUnity(userId, username, "unequipability", [removed.cmd])
