@@ -227,6 +227,13 @@ app.post("/unity/push", requireUnitySecret, (req, res) => {
  
   lastUnityPingAt = Date.now();
  
+  // If this viewer recently sent an equip/unequip from the panel, skip the push —
+  // the EBS cache already has the correct optimistic state, and Unity hasn't
+  // processed the command yet so this push carries stale data.
+  if (isLockedOut(userId)) {
+    return res.json({ ok: true, skipped: true, reason: "command_lockout" });
+  }
+ 
   const now   = new Date().toISOString();
   const entry = {
     state,
