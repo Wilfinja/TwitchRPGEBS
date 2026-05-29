@@ -41,10 +41,17 @@ const TWITCH_SECRET     = process.env.TWITCH_SECRET     || "r9gSD4SBY4p9v1+QTFI6
 const UNITY_INBOUND_URL = process.env.UNITY_INBOUND_URL || "https://desktop-5blpp4r.tail3e1aec.ts.net/";
 const PORT              = process.env.PORT              || 3000;
 
+// Can be overridden at runtime by /unity/register-inbound (ngrok URL changes on restart)
+let UNITY_INBOUND_URL_OVERRIDE = null;
+const getUnityUrl = () => (UNITY_INBOUND_URL_OVERRIDE || UNITY_INBOUND_URL).replace(/\/+$/, "");
+const PORT              = process.env.PORT              || 3000;
+ 
 const PERSIST_DIR  = process.env.PERSIST_PATH || (fs.existsSync("/data") ? "/data" : "/tmp");
 const PERSIST_FILE = path.join(PERSIST_DIR, "rpg_viewer_states.json");
  
-const ONLINE_THRESHOLD_MS = 20_000;
+// How long without a Unity push before we consider the stream offline.
+// Set to 60s to survive Unity hitches during expedition wave loading/combat.
+const ONLINE_THRESHOLD_MS = 60_000;
  
 // ── In-memory state ───────────────────────────────────────────────────────────
  
@@ -142,7 +149,24 @@ function requireTwitchJwt(req, res, next) {
   }
 }
  
-// ── Unity → EBS: push a single viewer's state ────────────────────────────────
+// ── Unity → EBS: register current tunnel URL ─────────────────────────────────
+// Called by PanelSyncServer on startup with the current ngrok/Funnel URL.
+// Updates UNITY_INBOUND_URL in memory so commands reach Unity immediately
+// without needing a Railway redeploy.
+ 
+app.post("/unity/register-inbound", requireUnitySecret, (req, res) => {
+  const { inboundUrl } = req.body;
+  if (!inboundUrl || !inboundUrl.startsWith("http")) {
+    return res.status(400).json({ error: "Invalid inboundUrl" });
+  }
+ 
+  // Update the in-process variable (persists until next Railway deploy/restart)
+  UNITY_INBOUND_URL_OVERRIDE = inboundUrl;
+  console.log(`[EBS] Unity inbound URL updated to: ${inboundUrl}`);
+  res.json({ ok: true, inboundUrl });
+});
+ 
+ 
  
 app.post("/unity/push", requireUnitySecret, (req, res) => {
   const { userId, state } = req.body;
@@ -343,7 +367,7 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
  
   // ── All other commands: forward to Unity ───────────────────────────────────
   try {
-    const unityRes = await fetch(`${UNITY_INBOUND_URL}/`, {
+    const unityRes = await fetch(`${getUnityUrl()}/`, {
       method:  "POST",
       headers: {
         "Content-Type":               "application/json",
@@ -360,12 +384,14 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
     }
     res.json(data);
   } catch (err) {
-    console.error("[Command] Unity unreachable:", err.message);
-    lastUnityPingAt = null;
+    console.error("[Command] Unity forward failed:", err.message);
+    // Don't null lastUnityPingAt here — a single command timeout doesn't mean
+    // the stream is offline. Unity push pings every 2s will naturally expire
+    // the online status if Unity is truly gone.
     res.status(503).json({
-      error:   "Stream is offline",
-      offline: true,
-      hint:    "Make sure the stream is live and PanelSyncServer is running.",
+      error:   "Could not reach Unity",
+      offline: false,
+      hint:    "Command timed out — Unity may be busy. Try again in a moment.",
     });
   }
 });
@@ -387,18 +413,51 @@ app.get("/health", (req, res) => {
     viewersCached:   viewerStates.size,
     lastUnityPingAt: lastUnityPingAt ? new Date(lastUnityPingAt).toISOString() : null,
     persistFile:     PERSIST_FILE,
-    unityInboundUrl: UNITY_INBOUND_URL,
+    unityInboundUrl: getUnityUrl(),
   });
 });
  
-// ── Debug: test Tailscale tunnel to Unity ─────────────────────────────────────
+// ── Debug: detailed status ────────────────────────────────────────────────────
+// Hit during a live stream to see exactly what the EBS thinks is happening:
+//   https://your-railway-url.up.railway.app/debug/status
+app.get("/debug/status", (req, res) => {
+  const now     = Date.now();
+  const pingAge = lastUnityPingAt ? (now - lastUnityPingAt) : null;
+  res.json({
+    online:            isUnityOnline(),
+    lastUnityPingAt:   lastUnityPingAt ? new Date(lastUnityPingAt).toISOString() : null,
+    pingAgeMs:         pingAge,
+    pingAgeSeconds:    pingAge ? Math.floor(pingAge / 1000) : null,
+    onlineThresholdMs: ONLINE_THRESHOLD_MS,
+    viewersCached:     viewerStates.size,
+    unityInboundUrl:   getUnityUrl(),
+    globalState:       globalState,
+  });
+});
+ 
+ 
 // Hit this in your browser to confirm Railway can reach your PC:
 //   https://your-railway-url.up.railway.app/debug/ping-unity
 // You should see {"reachable":true} if Tailscale + port 7433 are working.
 // Remove or protect this endpoint once confirmed working.
+// ── Debug: check a specific viewer's cached state ────────────────────────────
+// https://your-railway-url.up.railway.app/debug/viewer/TWITCH_USER_ID
+app.get("/debug/viewer/:userId", (req, res) => {
+  const entry = viewerStates.get(req.params.userId);
+  if (!entry) return res.json({ found: false, userId: req.params.userId });
+  res.json({
+    found:      true,
+    userId:     req.params.userId,
+    updatedAt:  entry.updatedAt,
+    abilities:  entry.state.abilities  || [],
+    class:      entry.state.class,
+    level:      entry.state.level,
+  });
+});
+ 
 app.get("/debug/ping-unity", async (req, res) => {
   try {
-    const response = await fetch(`${UNITY_INBOUND_URL}/`, {
+    const response = await fetch(`${getUnityUrl()}/`, {
       method:  "POST",
       headers: {
         "Content-Type": "application/json",
@@ -412,13 +471,13 @@ app.get("/debug/ping-unity", async (req, res) => {
       reachable:   true,
       status:      response.status,
       body:        text.substring(0, 200),
-      unityUrl:    UNITY_INBOUND_URL,
+      unityUrl:    getUnityUrl(),
     });
   } catch (err) {
     res.json({
       reachable:  false,
       error:      err.message,
-      unityUrl:   UNITY_INBOUND_URL,
+      unityUrl:   getUnityUrl(),
       hint:       "Check: (1) Tailscale is running, (2) UNITY_INBOUND_URL is your Tailscale IP not localhost, (3) port 7433 is allowed in Windows Firewall",
     });
   }
@@ -430,7 +489,7 @@ app.get("/debug/ping-unity", async (req, res) => {
 // Callers should .catch() this — it must never block a panel response.
  
 async function forwardToUnity(userId, username, command, args) {
-  const res = await fetch(`${UNITY_INBOUND_URL}/`, {
+  const res = await fetch(`${getUnityUrl()}/`, {
     method:  "POST",
     headers: {
       "Content-Type":              "application/json",
@@ -519,7 +578,7 @@ loadPersistedStates();
  
 app.listen(PORT, () => {
   console.log(`[EBS] Running on port ${PORT}`);
-  console.log(`[EBS] Unity inbound:  ${UNITY_INBOUND_URL}`);
+  console.log(`[EBS] Unity inbound:  ${getUnityUrl()}`);
   console.log(`[EBS] Persist file:   ${PERSIST_FILE}`);
   console.log(`[EBS] PubSub:         ${!!(TWITCH_CLIENT_ID && TWITCH_SECRET)}`);
   console.log(`[EBS] Static files:   ${path.join(__dirname, "public")}`);
