@@ -44,7 +44,6 @@ const PORT              = process.env.PORT              || 3000;
 // Can be overridden at runtime by /unity/register-inbound (ngrok URL changes on restart)
 let UNITY_INBOUND_URL_OVERRIDE = null;
 const getUnityUrl = () => (UNITY_INBOUND_URL_OVERRIDE || UNITY_INBOUND_URL).replace(/\/+$/, "");
-const PORT              = process.env.PORT              || 3000;
  
 const PERSIST_DIR  = process.env.PERSIST_PATH || (fs.existsSync("/data") ? "/data" : "/tmp");
 const PERSIST_FILE = path.join(PERSIST_DIR, "rpg_viewer_states.json");
