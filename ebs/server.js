@@ -308,9 +308,12 @@ const ALLOWED_PANEL_COMMANDS = new Set([
   "stance", "stances", "pvpstats",
 ]);
  
+// Commands that are flatly rejected when Unity is offline (no point forwarding).
+// queue, confirm, equipability, unequipability are NOT listed here — if Unity
+// is truly offline the forward will time out with a clear error. Pre-emptive 503s
+// cause false rejections during brief push-cycle gaps when Unity IS running.
 const REQUIRES_ONLINE = new Set([
-  "queue", "q", "confirm",
-  "sell", "buy", "levelup",
+  "sell", "buy",
 ]);
  
 app.post("/panel/command", requireTwitchJwt, async (req, res) => {
@@ -333,101 +336,16 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
     });
   }
  
-  // ── EBS-side loadout commands ───────────────────────────────────────────────
-  // equipability and unequipability only touch viewer.equippedAbilities in the
-  // cached state. We handle them here so they work even if the Tailscale tunnel
-  // is down, then push the updated state so the panel refreshes immediately.
- 
-  if (cmd === "equipability" || cmd === "equipa") {
-    const entry = viewerStates.get(userId);
-    if (!entry) return res.status(404).json({ error: "Viewer not found. Join the game first." });
- 
-    const abilityCmd = (args && args[0]) ? args[0].toLowerCase() : null;
-    if (!abilityCmd) return res.status(400).json({ error: "Missing ability name." });
- 
-    const abilities = entry.state.abilities || [];
-    const MAX_SLOTS = entry.state.maxAbilitySlots || 4;
- 
-    if (abilities.length >= MAX_SLOTS) {
-      return res.json({ success: false, error: `Loadout full (${MAX_SLOTS}/${MAX_SLOTS}). Unequip one first.` });
-    }
-    if (abilities.find(a => a.cmd === abilityCmd)) {
-      return res.json({ success: false, error: `${abilityCmd} is already in your loadout.` });
-    }
- 
-    const available = entry.state.availableAbilities || [];
-    const abilityData = available.find(a => a.cmd === abilityCmd);
-    if (!abilityData) {
-      return res.json({ success: false, error: `Ability '${abilityCmd}' not found or not yet unlocked.` });
-    }
- 
-    // Update EBS cache first
-    abilities.push(abilityData);
-    entry.state.abilities = abilities;
-    entry.updatedAt = new Date().toISOString();
-    viewerStates.set(userId, entry);
-    schedulePersist();
-    setCommandLockout(userId); // prevent next batch push from rolling this back
- 
-    // Forward to Unity so RPGManager saves the change — fire and forget
-    forwardToUnity(userId, username, "equipability", [abilityCmd])
-      .catch(err => console.warn("[Command] Unity equipability forward failed:", err.message));
- 
-    // Push updated state to panel via PubSub
-    broadcastToViewer(userId, { ...entry.state, _online: isUnityOnline(), _updatedAt: entry.updatedAt })
-      .catch(err => console.error("[PubSub] equipability push error:", err.message));
- 
-    return res.json({ success: true, message: `Equipped ${abilityData.name}! Slots: ${abilities.length}/${MAX_SLOTS}` });
-  }
- 
-  if (cmd === "unequipability" || cmd === "unequipa") {
-    const entry = viewerStates.get(userId);
-    if (!entry) return res.status(404).json({ error: "Viewer not found. Join the game first." });
- 
-    const abilities = entry.state.abilities || [];
-    if (abilities.length === 0) {
-      return res.json({ success: false, error: "No abilities equipped." });
-    }
- 
-    const arg = (args && args[0]) ? args[0] : null;
-    if (!arg) return res.status(400).json({ error: "Provide a slot number or ability name." });
- 
-    let removed = null;
-    const slotNum = parseInt(arg, 10);
- 
-    if (!isNaN(slotNum)) {
-      if (slotNum < 1 || slotNum > abilities.length) {
-        return res.json({ success: false, error: `Invalid slot. You have ${abilities.length} abilities equipped.` });
-      }
-      removed = abilities.splice(slotNum - 1, 1)[0];
-    } else {
-      const idx = abilities.findIndex(a => a.cmd === arg.toLowerCase());
-      if (idx === -1) {
-        return res.json({ success: false, error: `'${arg}' is not in your loadout.` });
-      }
-      removed = abilities.splice(idx, 1)[0];
-    }
- 
-    // Update EBS cache
-    entry.state.abilities = abilities;
-    entry.updatedAt = new Date().toISOString();
-    viewerStates.set(userId, entry);
-    schedulePersist();
-    setCommandLockout(userId); // prevent next batch push from rolling this back
- 
-    // Forward to Unity by cmd name — Unity will find the slot itself
-    forwardToUnity(userId, username, "unequipability", [removed.cmd])
-      .catch(err => console.warn("[Command] Unity unequipability forward failed:", err.message));
- 
-    // Push updated state to panel
-    broadcastToViewer(userId, { ...entry.state, _online: isUnityOnline(), _updatedAt: entry.updatedAt })
-      .catch(err => console.error("[PubSub] unequipability push error:", err.message));
- 
-    const MAX_SLOTS = entry.state.maxAbilitySlots || 4;
-    return res.json({ success: true, message: `Removed ${removed.name} from loadout. Slots: ${abilities.length}/${MAX_SLOTS}` });
-  }
- 
   // ── All other commands: forward to Unity ───────────────────────────────────
+  // equipability and unequipability go through here too — Unity's HandleRPGCommand
+  // is the single source of truth. We set a lockout so the next batch push doesn't
+  // roll back the panel before Unity echoes the change back via PushViewerImmediate.
+  // The panel does an optimistic local update on its own side in panel.js.
+  if (cmd === "equipability" || cmd === "equipa" ||
+      cmd === "unequipability" || cmd === "unequipa") {
+    setCommandLockout(userId);
+  }
+ 
   try {
     const unityRes = await fetch(`${getUnityUrl()}/`, {
       method:  "POST",
