@@ -337,15 +337,16 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
   }
  
   // ── All other commands: forward to Unity ───────────────────────────────────
-  // equipability and unequipability go through here too — Unity's HandleRPGCommand
-  // is the single source of truth. We set a lockout so the next batch push doesn't
-  // roll back the panel before Unity echoes the change back via PushViewerImmediate.
-  // The panel does an optimistic local update on its own side in panel.js.
-  if (cmd === "equipability" || cmd === "equipa" ||
-      cmd === "unequipability" || cmd === "unequipa") {
-    setCommandLockout(userId);
-  }
+  // equipability and unequipability go through Unity's HandleRPGCommand first
+  // (same path as typing in chat). If Tailscale Funnel is down, they fall back
+  // to an EBS-side cache update so the panel still reflects the change.
+  // All other commands (queue, confirm, etc.) fail hard if Unity is unreachable.
+  const isLoadoutCmd = (cmd === "equipability" || cmd === "equipa" ||
+                        cmd === "unequipability" || cmd === "unequipa");
  
+  if (isLoadoutCmd) setCommandLockout(userId);
+ 
+  let unitySucceeded = false;
   try {
     const unityRes = await fetch(`${getUnityUrl()}/`, {
       method:  "POST",
@@ -360,19 +361,87 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
  
     const data = await unityRes.json();
     if (!unityRes.ok) {
-      return res.status(502).json({ error: "Unity rejected command", detail: data });
+      if (!isLoadoutCmd) return res.status(502).json({ error: "Unity rejected command", detail: data });
+      // For loadout commands, a Unity-side rejection (wrong class, already equipped etc.)
+      // is a real error — surface it directly.
+      return res.json({ success: false, error: data.message || data.error || "Unity rejected command" });
     }
-    res.json(data);
+    unitySucceeded = true;
+    return res.json(data);
+ 
   } catch (err) {
     console.error("[Command] Unity forward failed:", err.message);
-    // Don't null lastUnityPingAt here — a single command timeout doesn't mean
-    // the stream is offline. Unity push pings every 2s will naturally expire
-    // the online status if Unity is truly gone.
-    res.status(503).json({
-      error:   "Could not reach Unity",
-      offline: false,
-      hint:    "Command timed out — Unity may be busy. Try again in a moment.",
-    });
+ 
+    if (!isLoadoutCmd) {
+      // Combat commands need Unity — surface the error clearly.
+      return res.status(503).json({
+        error:  "Could not reach Unity — is Tailscale Funnel running?",
+        hint:   "Run: tailscale funnel --bg 7433",
+      });
+    }
+    // Fall through to EBS-side fallback for loadout commands.
+  }
+ 
+  // ── EBS-side fallback for equipability / unequipability ──────────────────
+  // Unity was unreachable (Tailscale down). Apply the change to the EBS cache
+  // so the panel updates immediately. The change will be lost if Unity never
+  // sees it — warn the viewer so they know to re-do it if needed.
+  const entry = viewerStates.get(userId);
+  if (!entry) {
+    return res.status(503).json({ error: "Unity unreachable and no cached state found." });
+  }
+ 
+  const abilities = entry.state.abilities || [];
+  const available = entry.state.availableAbilities || [];
+  const MAX_SLOTS  = entry.state.maxAbilitySlots || 4;
+ 
+  if (cmd === "equipability" || cmd === "equipa") {
+    const abilityCmd  = (args && args[0]) ? args[0].toLowerCase() : null;
+    if (!abilityCmd) return res.status(400).json({ error: "Missing ability name." });
+    if (abilities.length >= MAX_SLOTS)
+      return res.json({ success: false, error: `Loadout full (${MAX_SLOTS}/${MAX_SLOTS}).` });
+    if (abilities.find(a => a.cmd === abilityCmd))
+      return res.json({ success: false, error: `${abilityCmd} is already equipped.` });
+    const abilityData = available.find(a => a.cmd === abilityCmd);
+    if (!abilityData)
+      return res.json({ success: false, error: `Ability '${abilityCmd}' not found or not unlocked.` });
+ 
+    abilities.push(abilityData);
+    entry.state.abilities = abilities;
+    entry.updatedAt = new Date().toISOString();
+    viewerStates.set(userId, entry);
+    schedulePersist();
+    broadcastToViewer(userId, { ...entry.state, _online: isUnityOnline(), _updatedAt: entry.updatedAt })
+      .catch(() => {});
+    console.warn(`[Fallback] equipability '${abilityCmd}' applied to EBS cache only for ${userId} — Unity was unreachable`);
+    return res.json({ success: true, message: `Equipped ${abilityData.name} (offline — re-equip in chat if it doesn't save).` });
+  }
+ 
+  if (cmd === "unequipability" || cmd === "unequipa") {
+    const arg = (args && args[0]) ? args[0] : null;
+    if (!arg) return res.status(400).json({ error: "Missing slot or ability name." });
+    if (abilities.length === 0) return res.json({ success: false, error: "No abilities equipped." });
+ 
+    let removed = null;
+    const slotNum = parseInt(arg, 10);
+    if (!isNaN(slotNum)) {
+      if (slotNum < 1 || slotNum > abilities.length)
+        return res.json({ success: false, error: `Invalid slot. You have ${abilities.length} equipped.` });
+      removed = abilities.splice(slotNum - 1, 1)[0];
+    } else {
+      const idx = abilities.findIndex(a => a.cmd === arg.toLowerCase());
+      if (idx === -1) return res.json({ success: false, error: `'${arg}' is not in your loadout.` });
+      removed = abilities.splice(idx, 1)[0];
+    }
+ 
+    entry.state.abilities = abilities;
+    entry.updatedAt = new Date().toISOString();
+    viewerStates.set(userId, entry);
+    schedulePersist();
+    broadcastToViewer(userId, { ...entry.state, _online: isUnityOnline(), _updatedAt: entry.updatedAt })
+      .catch(() => {});
+    console.warn(`[Fallback] unequipability '${removed.cmd}' applied to EBS cache only for ${userId} — Unity was unreachable`);
+    return res.json({ success: true, message: `Removed ${removed.name} (offline — re-equip in chat if it doesn't save).` });
   }
 });
  
@@ -463,7 +532,31 @@ app.get("/debug/ping-unity", async (req, res) => {
   }
 });
  
-// ── Unity forward helper ──────────────────────────────────────────────────────
+// ── Unity → EBS: register current inbound URL ────────────────────────────────
+// Called by PanelSyncServer.cs on Start() so Railway always knows the current
+// Tailscale Funnel URL without needing to update the env var after every reboot.
+// Protected by UNITY_SECRET so only your Unity instance can call it.
+app.post("/unity/register-inbound", requireUnitySecret, (req, res) => {
+  const { url } = req.body;
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "Missing 'url' field" });
+  }
+ 
+  // Basic sanity check — must be https and look like a real URL
+  try { new URL(url); } catch {
+    return res.status(400).json({ error: "Invalid URL format" });
+  }
+  if (!url.startsWith("https://")) {
+    return res.status(400).json({ error: "URL must be https://" });
+  }
+ 
+  const previous = UNITY_INBOUND_URL_OVERRIDE || UNITY_INBOUND_URL;
+  UNITY_INBOUND_URL_OVERRIDE = url.replace(/\/+$/, ""); // strip trailing slash
+  console.log(`[EBS] Unity inbound URL updated: ${previous} → ${UNITY_INBOUND_URL_OVERRIDE}`);
+  res.json({ ok: true, unityInboundUrl: UNITY_INBOUND_URL_OVERRIDE });
+});
+ 
+ 
 // Sends a command to Unity's inbound HTTP listener (PanelSyncServer.cs).
 // Returns the parsed response body, or throws on network error.
 // Callers should .catch() this — it must never block a panel response.
