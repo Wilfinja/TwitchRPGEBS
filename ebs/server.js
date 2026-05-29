@@ -168,6 +168,32 @@ app.post("/unity/register-inbound", requireUnitySecret, (req, res) => {
  
  
  
+// ── Unity → EBS: batch push all viewer states (one request instead of N) ───────
+app.post("/unity/push-batch", requireUnitySecret, (req, res) => {
+  const { viewers } = req.body;
+  if (!Array.isArray(viewers) || viewers.length === 0) {
+    return res.status(400).json({ error: "Missing viewers array" });
+  }
+ 
+  lastUnityPingAt = Date.now();
+  const now = new Date().toISOString();
+  let count = 0;
+ 
+  for (const { userId, state } of viewers) {
+    if (!userId || !state) continue;
+    const entry = { state, updatedAt: now, lastSeenOnline: now };
+    viewerStates.set(userId, entry);
+    count++;
+ 
+    // PubSub whisper to each viewer — fire and forget
+    broadcastToViewer(userId, { ...state, _online: true, _updatedAt: now })
+      .catch(err => console.error(`[PubSub] batch whisper error for ${userId}:`, err.message));
+  }
+ 
+  schedulePersist();
+  res.json({ ok: true, count });
+});
+ 
 app.post("/unity/push", requireUnitySecret, (req, res) => {
   const { userId, state } = req.body;
   if (!userId || !state) return res.status(400).json({ error: "Missing userId or state" });
