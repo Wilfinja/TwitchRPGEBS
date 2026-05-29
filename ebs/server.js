@@ -58,30 +58,6 @@ const viewerStates  = new Map();
 let   globalState   = {};
 let   lastUnityPingAt = null;
  
-// ── Command lockout ───────────────────────────────────────────────────────────
-// When a viewer sends equipability / unequipability from the panel, the EBS
-// updates its cache optimistically and fires the change to Unity. But Unity's
-// batch push timer (every 5s) can fire BEFORE Unity has processed the command,
-// sending the OLD loadout back and overwriting the EBS cache — causing the
-// panel to revert. We block that viewer's slot in the batch push for 8 seconds,
-// which is long enough for the command to reach Unity and for the next batch
-// push to carry the correct state.
-const commandLockouts = new Map(); // userId → Date.now() when locked
- 
-function setCommandLockout(userId) {
-  commandLockouts.set(userId, Date.now());
-}
- 
-function isLockedOut(userId) {
-  const t = commandLockouts.get(userId);
-  if (!t) return false;
-  if (Date.now() - t >= 8_000) {
-    commandLockouts.delete(userId);
-    return false;
-  }
-  return true;
-}
- 
 // ── Persistence ───────────────────────────────────────────────────────────────
  
 function loadPersistedStates() {
@@ -204,10 +180,6 @@ app.post("/unity/push-batch", requireUnitySecret, (req, res) => {
  
   for (const { userId, state } of viewers) {
     if (!userId || !state) continue;
-    // If this viewer recently sent an equip/unequip command, the EBS cache
-    // already has the correct optimistic state. Skip Unity's push for this
-    // viewer until the lockout expires (8s), preventing the rollback.
-    if (isLockedOut(userId)) continue;
     const entry = { state, updatedAt: now, lastSeenOnline: now };
     viewerStates.set(userId, entry);
     count++;
@@ -226,13 +198,6 @@ app.post("/unity/push", requireUnitySecret, (req, res) => {
   if (!userId || !state) return res.status(400).json({ error: "Missing userId or state" });
  
   lastUnityPingAt = Date.now();
- 
-  // If this viewer recently sent an equip/unequip from the panel, skip the push —
-  // the EBS cache already has the correct optimistic state, and Unity hasn't
-  // processed the command yet so this push carries stale data.
-  if (isLockedOut(userId)) {
-    return res.json({ ok: true, skipped: true, reason: "command_lockout" });
-  }
  
   const now   = new Date().toISOString();
   const entry = {
@@ -343,8 +308,6 @@ app.post("/panel/command", requireTwitchJwt, async (req, res) => {
   // All other commands (queue, confirm, etc.) fail hard if Unity is unreachable.
   const isLoadoutCmd = (cmd === "equipability" || cmd === "equipa" ||
                         cmd === "unequipability" || cmd === "unequipa");
- 
-  if (isLoadoutCmd) setCommandLockout(userId);
  
   let unitySucceeded = false;
   try {
