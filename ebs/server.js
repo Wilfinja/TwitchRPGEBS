@@ -273,13 +273,10 @@ const ALLOWED_PANEL_COMMANDS = new Set([
   "stance", "stances", "pvpstats",
 ]);
  
-// Commands that are flatly rejected when Unity is offline (no point forwarding).
-// queue, confirm, equipability, unequipability are NOT listed here — if Unity
-// is truly offline the forward will time out with a clear error. Pre-emptive 503s
-// cause false rejections during brief push-cycle gaps when Unity IS running.
-const REQUIRES_ONLINE = new Set([
-  "sell", "buy",
-]);
+// Commands that require Unity to be online — rejected immediately if offline.
+// buy and sell are NOT listed here; if Unity is truly unreachable the forward
+// will time out with a clear error. Pre-emptive 503s cause false rejections.
+const REQUIRES_ONLINE = new Set([]);
  
 app.post("/panel/command", requireTwitchJwt, async (req, res) => {
   const { command, args } = req.body;
