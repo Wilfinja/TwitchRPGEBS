@@ -271,6 +271,7 @@ const ALLOWED_PANEL_COMMANDS = new Set([
   "equipability", "unequipability", "levelup",
   "sell", "buy", "shop", "coins", "balance",
   "stance", "stances", "pvpstats",
+  "enterexpedition", "startexpedition",
 ]);
  
 // Commands that require Unity to be online — rejected immediately if offline.
